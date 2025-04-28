@@ -1,0 +1,102 @@
+pipeline {
+    agent any
+
+    environment {
+        ARTIFACTORY_URL = 'http://172.31.20.183:8081/artifactory/calc-app-repo'
+        SONARQUBE_URL = 'http://172.31.18.183:9000'
+        PATH = "/home/ubuntu/bin:/usr/bin:$PATH"
+    }
+
+    tools {
+        maven 'Maven'    
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    echo "📝 Checking out the code..."
+                    checkout scm
+                    echo "✅ Code checkout completed successfully!"
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    echo "🔍 Running SonarQube Analysis..."
+                    withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONARQUBE_TOKEN')]) {
+                        sh '''
+                            mvn sonar:sonar -Dsonar.projectKey=calculator-sonar-project \
+                            -Dsonar.host.url=${SONARQUBE_URL} \
+                            -Dsonar.login=${SONARQUBE_TOKEN}
+                        '''
+                    }
+                    echo "✅ SonarQube analysis completed!"
+                }
+            }
+        }
+
+        stage('Build Artifact with Maven') {
+            steps {
+                script {
+                    echo "⚙️ Building artifact with Maven..."
+                    sh 'mvn clean install'
+                    echo "✅ Artifact build completed!"
+                }
+            }
+        }
+
+        stage('Push to Artifactory') {
+            steps {
+                script {
+                    echo "🚀 Pushing artifact to Artifactory..."
+
+                    withCredentials([usernamePassword(credentialsId: 'artifactory-credentials', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_PASSWORD')]) {
+                    sh """
+                    curl -u ${ARTIFACTORY_USER}:${ARTIFACTORY_PASSWORD} \
+                    -T target/calculator-javaProject-1.0-SNAPSHOT.jar \
+                    "http://107.21.188.29:8081/artifactory/calc-app-repo/com/example/calculator-javaProject/1.0-SNAPSHOT/calculator-javaProject-1.0-SNAPSHOT.jar"
+                    if [ $? -ne 0 ]; then
+                        echo "❌ Failed to upload artifact to Artifactory"
+                        exit 1
+                    fi
+                """
+                
+            }
+
+            echo "✅ Artifact pushed to Artifactory!"
+        }
+    }
+}
+    }
+
+    post {
+        always {
+            script {
+                echo "🧹 Cleaning up workspace..."
+                sh 'rm -rf target'
+                sh 'rm -rf *.log'
+                echo "✅ Cleanup completed!"
+
+                def subject = "✅ Pipeline Build Success"
+                def body = "The build for branch ${env.BRANCH_NAME} has succeeded."
+                
+                if (currentBuild.result == 'FAILURE' || currentBuild.result == null) {
+                    subject = "❌ Pipeline Build Failure"
+                    body = "The build for branch ${env.BRANCH_NAME} has failed. Please check the logs."
+                }
+                
+                emailext(
+                    subject: subject,
+                    body: body,
+                    to: 'amitor2002@gmail.com',
+                    from: 'amitor2002@gmail.com',  
+                )
+                echo "📧 Notification sent!"
+            }
+        }
+    }
+}
+
